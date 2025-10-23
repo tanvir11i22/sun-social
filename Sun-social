@@ -383,4 +383,158 @@ function renderFeed(){
   });
 
   // no posts
-  if(state.posts.length===0) document.getElementById('postsFeed').innerHTML = '<div class="card small muted">No posts
+  if(state.posts.length===0) document.getElementById('postsFeed').innerHTML = '<div class="card small muted">No posts yet — be the first!</div>';
+}
+
+function toggleLike(postId, btn){
+  const post = state.posts.find(p=>p.id===postId);
+  if(!post) return;
+  const idx = post.likes.indexOf(UID);
+  if(idx===-1){ post.likes.push(UID); btn.classList.add('liked'); animateHeart(postId); }
+  else { post.likes.splice(idx,1); btn.classList.remove('liked'); }
+  saveState(); btn.querySelector('.like-count').textContent = post.likes.length;
+}
+
+function animateHeart(postId){
+  const hb = document.getElementById('hb_'+postId);
+  if(!hb) return;
+  hb.style.transition='none'; hb.style.transform='translate(-50%,-120%) scale(0) rotate(0deg)'; hb.style.opacity='1';
+  requestAnimationFrame(()=>{ hb.style.transition='transform 700ms cubic-bezier(.2,.9,.2,1), opacity 700ms'; hb.style.transform='translate(-50%,-220%) scale(1.6) rotate(180deg)'; hb.style.opacity='0'; });
+}
+
+function renderComments(postId){
+  const list = document.getElementById('comments_list_'+postId);
+  if(!list) return;
+  list.innerHTML='';
+  const post = state.posts.find(p=>p.id===postId);
+  if(!post) return;
+  (post.comments || []).slice().reverse().forEach(c=>{
+    const r = document.createElement('div'); r.className='comment-row';
+    r.innerHTML = `<img src="${c.photo}" style="width:36px;height:36px;border-radius:50%"><div class="comment-bubble"><strong>${escapeHtml(c.name)}</strong><div style="font-size:13px">${escapeHtml(c.text)}</div><div class="small" style="margin-top:6px;color:#999">${new Date(c.at).toLocaleString()}</div></div>`;
+    list.appendChild(r);
+  });
+}
+
+function submitComment(postId, text){
+  if(!text || !text.trim()) return;
+  const post = state.posts.find(p=>p.id===postId);
+  if(!post) return;
+  post.comments = post.comments || [];
+  post.comments.push({id:uid(), name:state.profile.name, photo:state.profile.photo, text:text.trim(), at:Date.now()});
+  saveState(); renderComments(postId);
+}
+
+/* ---------- POST CREATION (images/videos client) ---------- */
+let selectedImages = [];
+let selectedVideo = null;
+
+$('#imgInput').addEventListener('change', ev=>{
+  selectedImages = Array.from(ev.target.files).slice(0,4);
+  selectedVideo = null;
+  renderMediaPreview();
+});
+$('#videoInput').addEventListener('change', ev=>{
+  selectedVideo = ev.target.files[0] || null;
+  if(selectedVideo) selectedImages = [];
+  renderMediaPreview();
+});
+$('#clearMedia').addEventListener('click', ev=>{
+  selectedImages = []; selectedVideo = null;
+  $('#imgInput').value=''; $('#videoInput').value=''; renderMediaPreview();
+});
+
+function renderMediaPreview(){
+  const holder = $('#mediaPreview'); holder.innerHTML = '';
+  if(selectedImages.length){
+    selectedImages.forEach(f=>{
+      const url = URL.createObjectURL(f);
+      const img = document.createElement('img'); img.src = url; img.className='media-thumb'; holder.appendChild(img);
+    });
+  } else if(selectedVideo){
+    const url = URL.createObjectURL(selectedVideo);
+    const v = document.createElement('video'); v.src = url; v.className='media-thumb'; v.controls=true; holder.appendChild(v);
+  }
+}
+
+$('#publishPost').addEventListener('click', async ()=>{
+  const text = $('#inputPost').value.trim();
+  if(!text && selectedImages.length===0 && !selectedVideo){ alert('Write something or add media'); return; }
+  // convert images to data URLs (local-only)
+  const media = [];
+  for(const img of selectedImages){
+    const data = await fileToDataURL(img);
+    media.push({type:'image', url:data});
+  }
+  if(selectedVideo){
+    // for demo: read small video as blob url (not dataURL to avoid memory bloat)
+    const blobUrl = URL.createObjectURL(selectedVideo);
+    media.push({type:'video', url:blobUrl});
+  }
+  const post = {id:uid(), author:state.profile, text, media, likes:[], comments:[], at:Date.now()};
+  state.posts.push(post); saveState();
+  // optimistic render
+  $('#inputPost').value=''; selectedImages=[]; selectedVideo=null; $('#imgInput').value=''; $('#videoInput').value='';
+  renderMediaPreview();
+  renderFeed();
+  // small success pulse
+  $('#composer').classList.add('pulse'); setTimeout(()=>$('#composer').classList.remove('pulse'),500);
+});
+
+function fileToDataURL(file){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+/* ---------- PROFILE EDIT ---------- */
+$('#openProfile').addEventListener('click', ()=>{ $('#profileModal').style.display='flex'; });
+$('#closeProfileModal').addEventListener('click', ()=>{ $('#profileModal').style.display='none'; });
+$('#avatarInput').addEventListener('change', async (ev)=>{
+  const f = ev.target.files[0]; if(!f) return;
+  const data = await fileToDataURL(f);
+  $('#profileAvatar').src = data; $('#meAvatar').src = data; state.profile.photo = data; saveState(); renderFeed();
+});
+$('#saveProfile').addEventListener('click', ()=> {
+  state.profile.name = $('#profileName').value.trim() || state.profile.name;
+  state.profile.bio = $('#profileBio').value.trim() || state.profile.bio;
+  state.profile.photo = $('#profileAvatar').src || state.profile.photo;
+  saveState(); renderProfileUI(); renderFeed(); $('#profileModal').style.display='none';
+});
+
+/* ---------- FRIENDS PANEL ---------- */
+$('#openFriends').addEventListener('click', ()=>{ const p = $('#friendsPanel'); p.style.display = p.style.display==='none'?'block':'none'; renderFriends(); });
+$('#addRandomFriend').addEventListener('click', ()=>{
+  const names = ['Jannat','Mahin','Sadia','Kabir','Rashed','Nur','Sumi','Ibrahim'];
+  const name = names[Math.floor(Math.random()*names.length)] + ' ' + Math.floor(Math.random()*90);
+  const f = {id:uid(), name, avatar:`https://i.pravatar.cc/100?u=${Math.random()}`};
+  state.friends.push(f); saveState(); renderFriends(); renderChatList(); renderFeed();
+});
+
+/* ---------- CHAT LIST ---------- */
+$('#openChatList').addEventListener('click', ()=>{ $('#chatListModal').style.display='flex'; renderChatList(); });
+$('#closeChatList').addEventListener('click', ()=>{ $('#chatListModal').style.display='none'; });
+
+$('#closeChat').addEventListener('click', closeChat);
+$('#sendChatBtn').addEventListener('click', sendChat);
+$('#chatText').addEventListener('keypress', ev=>{ if(ev.key==='Enter') sendChat(); });
+
+/* ---------- NAV + FAB ---------- */
+$('#fabNew').addEventListener('click', ()=>{ window.scrollTo({top:0,behavior:'smooth'}); $('#inputPost').focus(); });
+$('#navFriends').addEventListener('click', ()=>{ $('#openFriends').click(); });
+$('#navChat').addEventListener('click', ()=>{ $('#openChatList').click(); });
+$('#navProfileBtn').addEventListener('click', ()=>{ $('#openProfile').click(); });
+
+/* ---------- INIT ---------- */
+renderProfileUI(); renderFriends(); renderFeed(); renderChatList();
+
+/* make sure UI updates on load */
+window.addEventListener('load', ()=>{
+  renderProfileUI(); renderFriends(); renderFeed(); renderChatList();
+});
+</script>
+
+</body>
+</html>
